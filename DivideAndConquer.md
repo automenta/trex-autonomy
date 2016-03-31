@@ -1,0 +1,42 @@
+# Divide And Conquer #
+One of the main criticisms of control systems based on _Sense-Plan-Act_ is that they are too slow, because planning is too slow. Thus, planning can only be applied to higher levels of an agent architecture where it can deliberate at length over how best to achieve high-level goals, and then send the plan off to an executive for execution. The executive will not plan, and so it can be much faster. However, the executive must now be programmed by hand to properly decompose higher-level plans into lower-level commands.
+
+A key idea behind T-REX is that an agent is not just a single monolithic controller. In practice, it is both feasible and desirable to break up the control structure into a collection of semi-independent control loops, each with it's own internal SPA cycle. Intuitively, this is feasible in many applications because:
+  * Typically planning over long time horizons occurs at a relatively coarse level of abstraction, and can be conducted over relatively long periods of time (perhaps minutes). Many details of agent state can be ignored.
+  * Planning for lower levels of detail is generally conducted over much shorter time horizons. Moreover, it is often the case that a relatively small set of the total agent state is relevant to the local planning problem.
+
+In T-REX terminology, this means that the agent control structure can be divided into a collection of Teleo-Reactors where each one is configured with a different _functional scope_ (i.e. the set of timelines it considers) and _temporal scope_ (i.e. the planning horizon over which it finds plans. This factored control structure is highly desirable because:
+  * The costs of operating on N small plan databases is much less than the costs of operating on one big one.
+  * It is usually easier to solve problems independently than to solve them all together.
+  * Plan failure in one reactor can (often) be locally resolved without impacting other reactors.
+  * A working system can be built and tested incrementally.
+
+# The Compositional Nature of a Teleo-Reactor #
+The symmetry of inbound and outbound goals and observations enables natural composition of _reactors_. This is shown below with a 4 reactor configuration. The internal details of a reactor are irrelevant. Reactor _A_ is the top-level reactor. It can dispatch goals and observations to other reactors (i.e. reactors _B_ and _C_). It's goals originate outside the agent. Both _B_ and _C_ interact with _D_. Thus, the aggregate control structure is partitioned into a collection of reactors. Goals flow top down. Observations flow bottom up. Note that observations for a single timeline may be published to more than one reactor, and goals for a given timeline can be dispatched from more than one reactor.
+
+![http://trex-autonomy.googlecode.com/svn/wiki/images/composition.png](http://trex-autonomy.googlecode.com/svn/wiki/images/composition.png)
+
+# Timeline ownership to direct information flow unambiguosly #
+T-REX defines an _ownership_ and _usage_ model of timelines to make the composition of reactors explicit, and the rules for information flow and conflict resolution unambiguous.  If a reactor _owns_ a timeline, it is solely responsible for deciding what value that timeline has as execution unfolds. Such timelines are _internal_ to that reactor. If a reactor _uses_ a timeline,  it will receive new values for that timeline as they arise, and it may dispatch any goals it has for that timeline to the owner reactor. Such a timeline is _external_ to its user. The user of a timeline _depends_ on it's owner. This dependency dictates the flow of information in T-REX. The key to scalability is that the scope of computation for each reactor is restricted to only the set of timelines it explicitly owns or uses, over the time horizon it cares to deliberate. This modularity, coupled with the dependency directed information flow, makes T-REX amenable to divide-and-conquer strategies to scale up to larger scale systems efficiently in a unified computational framework.
+
+# An Example #
+We will now illustrate the compositional approach using [PR2](http://www.willowgarage.com/pages/robots/pr2-overview), a sophisticated mobile manipulation platform designed for use in indoor environments. In June, 2009, a PR2 completed [Milestone 2](http://www.willowgarage.com/blog/2009/06/03/watch-milestone-2), a challenging autonomy triathalon involving navigation, opening doors, and plugging itself in to a standard electrical outlet. T-REX was used as the executive.
+
+## Reactor Graph ##
+The reactor graph is shown below. It depicts the set of reactors and dependencies between them. Each reactor and its dependent links are color-coded. Goals flow in the direction of these links. Observations flow in the reverse direction. Each reactor is annotated with a name, its _look-ahead_ indicating how far ahead to plan, its _latency_ giving an upper bound on plan completion time, and parameters _i_ and _e_ indicating the number of internal and external timelines respectively. A _look-ahead_ of _H_ indicates the reactor plans for the entire agent horizon. A _latency_ of _0_ indicates that planning must complete before the next tick.
+
+![http://trex-autonomy.googlecode.com/svn/wiki/images/reactorgraph.png](http://trex-autonomy.googlecode.com/svn/wiki/images/reactorgraph.png)
+
+The **Robot Control Subsystem** has no external timelines. It is  mapped to a single exogenous state variable giving the planar pose of the robot, as well as each of 25 external action primitives for doing things like grasping a handle, moving the base, pushing the door. This reactor is implemented as an adapter mapping [ROS messages](http://www.ros.org/wiki/Messages) to goal requests, recalls and observations. All other reactors were instances of a [Deliberative Reactor](http://code.google.com/p/trex-autonomy/wiki/SensePlanAct#The_Deliberative_Reactor) varying in their functional and temporal scopes. Real-time controller configuration management was handled in the **Mechanism Control** reactor. The **Doorman** encapsulated behavior for navigating doorways. The **Driver** was used for navigation in all other regions (i.e. offices, hallways and open areas). The **Navigator** enacapsulated planar navigation and doorway traversal, allowing higher level systems to reason about simply getting to a point in the building. The **Recharger** encapsulated all behavior for plugging in and unplugging. At the top level, the **Master** was used to plan the overall tour given high-level goals, and decompose these goals into successive calls to the **Navigator** and **Recharger**. The **State Estimator**  monitored execution to track a number of variables of interest for ensuring PR2 safety and enabled these variables to be shared by reactors.
+
+## Inside the **Master** reactor ##
+The screen shot below is from the [Execution Monitor](http://trex-autonomy.googlecode.com/svn/wiki/ExecutionMonitor) which is used to observe T-REX state during execution. The panels on the left indicate the set of all reactors and the one that is in view. In this case, it is the **Master**. The timelines contained within the **Master** reactor are also displayed. All times shown are _earliest start_ and _earliest end_. The _execution frontier_ is at tick _9_. In this case, the set of top-level goals are on the **m2\_goals** timeline, which delegates to the **navigator** and **recharger**. Notice that the **recharger** is in the active state.
+
+![http://trex-autonomy.googlecode.com/svn/wiki/images/master.png](http://trex-autonomy.googlecode.com/svn/wiki/images/master.png)
+
+## Inside the **Mechanism Control** reactor ##
+The screen shot below is for the **Mechanism Control** reactor for the same tick (_9_). Note the correspondence between planned states for the various mechanism timelines and the activation states of the **switch\_controllers** timeline. Each transition is achieved by execution of a **switch\_controller** action.
+
+Full details of this milestone can be found [here](http://code.google.com/p/trex-autonomy/wiki/M2).
+
+![http://trex-autonomy.googlecode.com/svn/wiki/images/mechanism_control.png](http://trex-autonomy.googlecode.com/svn/wiki/images/mechanism_control.png)

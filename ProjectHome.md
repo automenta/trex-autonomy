@@ -1,0 +1,1 @@
+The Teleo-Reactive Executive (T-REX) is a hybrid executive combining goal-driven and event-driven behavior in a unified framework based on temporal plans and temporal planning. The wiki for TREX has moved to [ros.org](http://www.ros.org/wiki/trex).
